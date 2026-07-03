@@ -22,17 +22,19 @@ dashboard/
 **export 시점의 스냅샷**입니다. 대시보드 상단에 데이터 기준 시각이 표시되고,
 1시간 이상 오래되면 경고색으로 바뀝니다.
 
-## 배포 방법
+## 배포 / 데이터 갱신
 
-최초 1회 Netlify 인증:
+**중요**: "데이터 기준" 시각은 배포 시각이 아니라 `export_data.py` 실행 시각입니다.
+commit & push만 하면 예전 스냅샷이 그대로 올라가므로, **push 전에 반드시 export를 다시 실행**해야 합니다.
+
+레포가 Netlify에 연결되어 있으면 (git push = 자동 배포) 한 줄로 끝:
 
 ```bash
-npx --yes netlify-cli login              # 브라우저 열림
-# 또는 토큰 방식 (헤드리스 환경 권장):
-export NETLIFY_AUTH_TOKEN=<personal-access-token>
+~/Documents/AgentreeCompany/dashboard/scripts/publish.sh
+# = export_data.py 실행 → data.json/assets 커밋 → push
 ```
 
-이후 배포는 한 줄:
+Netlify CLI로 직접 배포하려면 (`npx netlify-cli login` 1회 필요):
 
 ```bash
 ~/Documents/AgentreeCompany/dashboard/scripts/deploy.sh
@@ -40,12 +42,12 @@ export NETLIFY_AUTH_TOKEN=<personal-access-token>
 
 ## 자동 갱신 (선택)
 
-hermes cron 또는 시스템 crontab으로 주기 배포:
+crontab으로 주기 갱신 (git push 방식이므로 토큰 불필요):
 
 ```bash
-# 매시 정각에 스냅샷 갱신 + 배포 (NETLIFY_AUTH_TOKEN 필요)
 crontab -e
-0 * * * * NETLIFY_AUTH_TOKEN=<token> /home/leehg/Documents/AgentreeCompany/dashboard/scripts/deploy.sh >> /tmp/agentree-dashboard-deploy.log 2>&1
+# 매시 정각에 스냅샷 갱신 + push
+0 * * * * /home/leehg/Documents/AgentreeCompany/dashboard/scripts/publish.sh >> /tmp/agentree-dashboard-publish.log 2>&1
 ```
 
 ## 로컬 미리보기
