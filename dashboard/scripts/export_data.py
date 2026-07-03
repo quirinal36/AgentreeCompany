@@ -6,8 +6,11 @@
     python3 export_data.py [--db ~/.hermes/kanban.db] [--out ../site/data.json]
 """
 import argparse
+import hashlib
 import json
 import os
+import re
+import shutil
 import sqlite3
 import sys
 import time
@@ -21,6 +24,27 @@ RUN_FIELDS = (
     "id", "task_id", "profile", "step_key", "status", "outcome",
     "started_at", "ended_at", "summary", "error",
 )
+
+# 산출물 수집 대상 팀 폴더 (폴더 → 기본 담당 프로필)
+TEAM_DIRS = {
+    "RND_Team": "nana",
+    "BlogTeam": "green",
+    "DesignTeam": "blue",
+}
+COMPANY_ROOT = os.path.expanduser("~/Documents/AgentreeCompany")
+
+ARTIFACT_TYPES = {
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
+    ".gif": "image", ".svg": "image",
+    ".mp4": "video", ".webm": "video", ".m4v": "video",
+    ".md": "markdown", ".txt": "markdown",
+    ".csv": "csv",
+    ".pdf": "link", ".html": "link",
+}
+MAX_ARTIFACT_BYTES = 95 * 1024 * 1024  # Netlify 파일 상한(100MB) 이하로 제한
+# 확장자 뒤 경계: ASCII 단어문자가 아니어야 함 (\b 는 한글 조사가 바로 붙으면 매치 실패)
+PATH_RE = re.compile(r"/home/\S+?\.(?:png|jpe?g|webp|gif|svg|mp4|webm|m4v|md|txt|csv|pdf|html)(?![A-Za-z0-9_])")
+EXCLUDE_NAMES = {"AGENTS.md", "README.md", "CLAUDE.md"}
 
 
 def rows(con, sql, params=()):
@@ -72,6 +96,7 @@ def export(db_path, out_path):
         )
 
     pipelines = build_pipelines(tasks, links)
+    artifacts = collect_artifacts(con, tasks, runs, os.path.dirname(out_path))
 
     data = {
         "generated_at": int(time.time()),
@@ -81,6 +106,7 @@ def export(db_path, out_path):
         "comments": comments,
         "events": events,
         "pipelines": pipelines,
+        "artifacts": artifacts,
     }
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -89,6 +115,117 @@ def export(db_path, out_path):
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
     os.replace(tmp, out_path)
     return data
+
+
+def collect_artifacts(con, tasks, runs, site_dir):
+    """산출물 경로를 수집해 site/assets/ 로 복사하고 메타데이터를 돌려준다.
+
+    출처: ① completed 이벤트 payload 의 artifacts 배열
+          ② 이벤트/런 요약·태스크 result 안의 절대경로 문자열
+          ③ 팀 폴더(RND_Team/BlogTeam/DesignTeam) 파일 스캔
+    """
+    by_task = {t["id"]: t for t in tasks}
+    candidates = {}  # abs path → set(task_id)
+
+    def add(path, task_id=None):
+        if not path:
+            return
+        path = os.path.normpath(path)
+        candidates.setdefault(path, set())
+        if task_id:
+            candidates[path].add(task_id)
+
+    # ①·② 이벤트 payload
+    for task_id, payload in con.execute(
+        "SELECT task_id, payload FROM task_events WHERE payload != ''"
+    ):
+        try:
+            parsed = json.loads(payload)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            arts = parsed.get("artifacts")
+            if isinstance(arts, list):
+                for a in arts:
+                    if isinstance(a, str):
+                        add(a, task_id)
+            for m in PATH_RE.findall(str(parsed.get("summary") or "")):
+                add(m, task_id)
+        else:
+            for m in PATH_RE.findall(payload):
+                add(m, task_id)
+
+    # ② 런 요약 / 태스크 result
+    for r in runs:
+        for m in PATH_RE.findall(r.get("summary") or ""):
+            add(m, r["task_id"])
+    for t in tasks:
+        for m in PATH_RE.findall(t.get("result") or ""):
+            add(m, t["id"])
+
+    # ③ 팀 폴더 스캔
+    for folder in TEAM_DIRS:
+        d = os.path.join(COMPANY_ROOT, folder)
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            if name.startswith(".") or name in EXCLUDE_NAMES:
+                continue
+            add(os.path.join(d, name))
+
+    assets_dir = os.path.join(site_dir, "assets")
+    shutil.rmtree(assets_dir, ignore_errors=True)
+    os.makedirs(assets_dir, exist_ok=True)
+
+    artifacts = []
+    skipped = []
+    for path, task_ids in candidates.items():
+        ext = os.path.splitext(path)[1].lower()
+        atype = ARTIFACT_TYPES.get(ext)
+        if atype is None or not os.path.isfile(path):
+            continue
+        size = os.path.getsize(path)
+        if size > MAX_ARTIFACT_BYTES:
+            skipped.append(path)
+            continue
+        aid = hashlib.sha1(path.encode("utf-8")).hexdigest()[:10]
+        safe_name = os.path.basename(path).replace(os.sep, "_")
+        rel = f"assets/{aid}-{safe_name}"
+        try:
+            shutil.copy2(path, os.path.join(site_dir, rel))
+        except OSError as e:
+            print(f"warn: copy failed {path}: {e}", file=sys.stderr)
+            continue
+
+        team = None
+        for folder, profile in TEAM_DIRS.items():
+            if f"/{folder}/" in path + "/":
+                team = profile
+                break
+        ordered_ids = sorted(
+            (tid for tid in task_ids if tid in by_task),
+            key=lambda tid: by_task[tid]["created_at"] or 0,
+        )
+        if team is None and ordered_ids:
+            team = by_task[ordered_ids[-1]]["assignee"]
+
+        artifacts.append(
+            {
+                "id": aid,
+                "name": os.path.basename(path),
+                "path": path,
+                "rel": rel,
+                "type": atype,
+                "size": size,
+                "mtime": int(os.path.getmtime(path)),
+                "task_ids": ordered_ids,
+                "team": team,
+            }
+        )
+    for p in skipped:
+        print(f"warn: {MAX_ARTIFACT_BYTES // (1024*1024)}MB 초과로 제외: {p}", file=sys.stderr)
+    artifacts.sort(key=lambda a: a["mtime"], reverse=True)
+    return artifacts
 
 
 def build_pipelines(tasks, links):
@@ -193,9 +330,11 @@ def main():
         sys.exit(1)
 
     data = export(args.db, args.out)
+    total_bytes = sum(a["size"] for a in data["artifacts"])
     print(
         f"exported {len(data['tasks'])} tasks, {len(data['runs'])} runs, "
-        f"{len(data['pipelines'])} pipelines, {len(data['events'])} events → {args.out}"
+        f"{len(data['pipelines'])} pipelines, {len(data['events'])} events, "
+        f"{len(data['artifacts'])} artifacts ({total_bytes / 1024 / 1024:.1f}MB) → {args.out}"
     )
 
 

@@ -51,6 +51,11 @@
         </div>
       </section>
 
+      <section class="panel" id="artifacts-panel">
+        <h2>산출물 <span class="h2-sub">파이프라인이 만든 결과물 — 이미지·영상은 바로 재생됩니다</span></h2>
+        <div id="artifact-grid" class="artifact-grid"></div>
+      </section>
+
       <section class="panel" id="pipelines-panel">
         <h2>파이프라인 히스토리 <span class="h2-sub">카드를 누르면 태스크·런·이벤트 상세가 열립니다</span></h2>
         <div id="pipeline-list" class="pipeline-list"></div>
@@ -84,6 +89,12 @@
 
   <div id="tooltip" class="tooltip" role="status" aria-hidden="true"></div>
   <div id="error-banner" class="error-banner" hidden></div>
+
+  <div id="viewer" class="viewer" hidden role="dialog" aria-modal="true" aria-label="산출물 뷰어">
+    <button id="viewer-close" class="viewer-close" type="button" aria-label="닫기">✕</button>
+    <div id="viewer-body" class="viewer-body"></div>
+    <div id="viewer-caption" class="viewer-caption"></div>
+  </div>
 
   <script src="app.js"></script>
 </body>

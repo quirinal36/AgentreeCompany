@@ -236,6 +236,69 @@ main.refreshing .panel, main.refreshing .kpi-row { opacity: 0.55; transition: op
   cursor: pointer; padding: 4px 0;
 }
 
+/* ── 산출물 갤러리 ────────────────────── */
+.artifact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.artifact-card {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--page);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.artifact-media {
+  position: relative; height: 150px; background: var(--ghost);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border: 0; padding: 0; width: 100%; cursor: pointer; color: inherit; font: inherit;
+}
+.artifact-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.artifact-media:hover img { opacity: 0.88; }
+.artifact-media:focus-visible { outline: 2px solid var(--st-running); outline-offset: -2px; }
+.artifact-media .doc-face {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  color: var(--ink-2); font-size: 12.5px; padding: 10px; text-align: center;
+  overflow-wrap: anywhere;
+}
+.artifact-media .doc-face .doc-icon { font-size: 30px; }
+.artifact-card video { width: 100%; height: 150px; background: #000; display: block; }
+.artifact-meta { padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.artifact-name { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.artifact-sub { font-size: 11.5px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.artifact-task { font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-ext-link { color: var(--st-running-text); text-decoration: none; font-size: 12px; }
+.artifact-ext-link:hover { text-decoration: underline; }
+
+/* 파이프라인 상세의 산출물 칩 */
+.detail-artifacts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.detail-artifact {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+  background: var(--surface); cursor: pointer; color: var(--ink-2); font-family: inherit;
+  max-width: 100%;
+}
+.detail-artifact:hover { background: var(--ghost); }
+.detail-artifact img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.detail-artifact .nm { overflow-wrap: anywhere; text-align: left; }
+
+/* ── 뷰어 (라이트박스/문서) ───────────── */
+.viewer {
+  position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.78);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 28px;
+}
+.viewer[hidden] { display: none; }
+.viewer-close {
+  position: absolute; top: 14px; right: 16px; z-index: 101;
+  border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.45); color: #fff;
+  border-radius: 8px; width: 36px; height: 36px; font-size: 15px; cursor: pointer;
+}
+.viewer-body { max-width: min(1100px, 94vw); max-height: 82vh; display: flex; justify-content: center; }
+.viewer-body img { max-width: 100%; max-height: 82vh; object-fit: contain; border-radius: 6px; }
+.viewer-body video { max-width: 100%; max-height: 82vh; border-radius: 6px; background: #000; }
+.viewer-body .doc-view {
+  background: var(--surface); color: var(--ink); border-radius: 10px;
+  padding: 20px 24px; overflow: auto; max-height: 82vh; width: min(860px, 94vw);
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.65;
+}
+.viewer-body .doc-view.csv { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; }
+.viewer-caption { color: rgba(255,255,255,0.85); font-size: 12.5px; margin-top: 10px; max-width: 94vw; text-align: center; }
+
 /* ── 테이블 ───────────────────────────── */
 .table-scroll { overflow-x: auto; }
 #task-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }

@@ -119,7 +119,14 @@ function buildIndexes(data) {
     commentsByTask.get(c.task_id).push(c);
   }
   const taskById = new Map(data.tasks.map((t) => [t.id, t]));
-  return { runsByTask, eventsByTask, commentsByTask, taskById };
+  const artifactsByTask = new Map();
+  for (const a of data.artifacts || []) {
+    for (const tid of a.task_ids || []) {
+      if (!artifactsByTask.has(tid)) artifactsByTask.set(tid, []);
+      artifactsByTask.get(tid).push(a);
+    }
+  }
+  return { runsByTask, eventsByTask, commentsByTask, taskById, artifactsByTask };
 }
 
 // ── 필터 ─────────────────────────────────────────────
@@ -162,7 +169,132 @@ function getFiltered() {
   });
 
   const pipelines = data.pipelines.filter((p) => p.task_ids.some((id) => taskIds.has(id)));
-  return { tasks, taskIds, runs, pipelines, from, to };
+
+  const artifacts = (data.artifacts || []).filter((a) => {
+    if (!agentOk(a.team)) return false;
+    if (from == null) return true;
+    if (a.mtime >= from && a.mtime <= to) return true;
+    return (a.task_ids || []).some((id) => taskIds.has(id));
+  });
+  return { tasks, taskIds, runs, pipelines, artifacts, from, to };
+}
+
+// ── 산출물 ───────────────────────────────────────────
+function fmtBytes(n) {
+  if (n == null) return '';
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))}KB`;
+  return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+const DOC_ICONS = { markdown: '📄', csv: '🗒️', link: '🔗' };
+
+function artifactTaskTitle(a) {
+  const ids = a.task_ids || [];
+  if (!ids.length) return null;
+  const t = state.idx.taskById.get(ids[ids.length - 1]);
+  return t ? t.title : null;
+}
+
+function openArtifact(a) {
+  if (a.type === 'link') {
+    window.open(a.rel, '_blank', 'noopener');
+    return;
+  }
+  const body = document.getElementById('viewer-body');
+  const caption = document.getElementById('viewer-caption');
+  clear(body);
+  clear(caption);
+  if (a.type === 'image') {
+    const img = document.createElement('img');
+    img.src = a.rel;
+    img.alt = a.name;
+    body.appendChild(img);
+  } else if (a.type === 'video') {
+    const video = document.createElement('video');
+    video.src = a.rel;
+    video.controls = true;
+    video.autoplay = true;
+    body.appendChild(video);
+  } else {
+    const doc = el('div', 'doc-view' + (a.type === 'csv' ? ' csv' : ''));
+    doc.textContent = '불러오는 중…';
+    body.appendChild(doc);
+    fetch(a.rel)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
+      .then((text) => { doc.textContent = text; })
+      .catch((e) => { doc.textContent = `파일을 불러오지 못했습니다 (${e.message})`; });
+  }
+  const bits = [a.name, fmtBytes(a.size), fmtTs(a.mtime)];
+  const title = artifactTaskTitle(a);
+  if (title) bits.push(title);
+  caption.textContent = bits.filter(Boolean).join(' · ');
+  const viewer = document.getElementById('viewer');
+  viewer.hidden = false;
+  document.getElementById('viewer-close').focus();
+}
+function closeViewer() {
+  const viewer = document.getElementById('viewer');
+  if (viewer.hidden) return;
+  clear(document.getElementById('viewer-body')); // 비디오 정지 포함
+  viewer.hidden = true;
+}
+function initViewer() {
+  const viewer = document.getElementById('viewer');
+  document.getElementById('viewer-close').addEventListener('click', closeViewer);
+  viewer.addEventListener('click', (e) => { if (e.target === viewer) closeViewer(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeViewer(); });
+}
+
+function renderArtifacts(f) {
+  const root = document.getElementById('artifact-grid');
+  clear(root);
+  if (!f.artifacts.length) {
+    root.appendChild(el('p', 'empty-note', '이 조건에 해당하는 산출물이 없습니다.'));
+    return;
+  }
+  for (const a of f.artifacts) {
+    const card = el('div', 'artifact-card');
+
+    if (a.type === 'video') {
+      const video = document.createElement('video');
+      video.src = a.rel;
+      video.controls = true;
+      video.preload = 'metadata';
+      card.appendChild(video);
+    } else {
+      const media = el('button', 'artifact-media');
+      media.type = 'button';
+      media.setAttribute('aria-label', `${a.name} 열기`);
+      if (a.type === 'image') {
+        const img = document.createElement('img');
+        img.src = a.rel;
+        img.alt = a.name;
+        img.loading = 'lazy';
+        media.appendChild(img);
+      } else {
+        const face = el('span', 'doc-face');
+        face.appendChild(el('span', 'doc-icon', DOC_ICONS[a.type] || '📄'));
+        face.appendChild(el('span', '', a.type === 'csv' ? 'CSV 데이터' : a.type === 'link' ? '새 탭에서 열기' : 'Markdown 문서'));
+        media.appendChild(face);
+      }
+      media.addEventListener('click', () => openArtifact(a));
+      card.appendChild(media);
+    }
+
+    const meta = el('div', 'artifact-meta');
+    meta.appendChild(el('div', 'artifact-name', a.name));
+    const sub = el('div', 'artifact-sub');
+    sub.appendChild(agentChip(a.team));
+    sub.appendChild(document.createTextNode(`${fmtBytes(a.size)} · ${fmtTs(a.mtime)}`));
+    meta.appendChild(sub);
+    const title = artifactTaskTitle(a);
+    if (title) {
+      const taskLine = el('div', 'artifact-task', title);
+      taskLine.title = title;
+      meta.appendChild(taskLine);
+    }
+    card.appendChild(meta);
+    root.appendChild(card);
+  }
 }
 
 // ── 칩 빌더 ──────────────────────────────────────────
@@ -688,6 +820,29 @@ function renderPipelineDetail(root, pipeline) {
       box.appendChild(list);
     }
 
+    const taskArtifacts = state.idx.artifactsByTask.get(tid) || [];
+    if (taskArtifacts.length) {
+      box.appendChild(el('div', 'detail-sub', '산출물'));
+      const row = el('div', 'detail-artifacts');
+      for (const a of taskArtifacts) {
+        const chip = el('button', 'detail-artifact');
+        chip.type = 'button';
+        if (a.type === 'image') {
+          const img = document.createElement('img');
+          img.src = a.rel;
+          img.alt = '';
+          img.loading = 'lazy';
+          chip.appendChild(img);
+        } else {
+          chip.appendChild(document.createTextNode(a.type === 'video' ? '🎬' : DOC_ICONS[a.type] || '📄'));
+        }
+        chip.appendChild(el('span', 'nm', a.name));
+        chip.addEventListener('click', () => openArtifact(a));
+        row.appendChild(chip);
+      }
+      box.appendChild(row);
+    }
+
     const comments = state.idx.commentsByTask.get(tid) || [];
     if (comments.length) {
       box.appendChild(el('div', 'detail-sub', '코멘트'));
@@ -840,11 +995,13 @@ function renderAll() {
   renderNow(f);
   renderDailyChart(f);
   renderAgentChart(f);
+  renderArtifacts(f);
   renderPipelines(f);
   renderTable(f);
 }
 
 initTheme();
+initViewer();
 bindRangeFilter();
 loadData(true);
 setInterval(() => { renderFreshness(); }, 30 * 1000);
