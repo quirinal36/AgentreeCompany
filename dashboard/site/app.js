@@ -42,7 +42,8 @@ const TZ = 'Asia/Seoul';
 const DAY_MS = 86400 * 1000;
 
 // ── 상태 ─────────────────────────────────────────────
-const state = { data: null, range: 'all', agent: 'all', openPipelines: new Set() };
+// artifactFolder: null = 폴더(파이프라인) 목록, 'p_…' = 해당 파이프라인 산출물, '_etc' = 미연결
+const state = { data: null, range: 'all', agent: 'all', openPipelines: new Set(), artifactFolder: null };
 
 // ── DOM 헬퍼 ─────────────────────────────────────────
 function el(tag, className, text) {
@@ -126,7 +127,12 @@ function buildIndexes(data) {
       artifactsByTask.get(tid).push(a);
     }
   }
-  return { runsByTask, eventsByTask, commentsByTask, taskById, artifactsByTask };
+  const pipelineById = new Map(data.pipelines.map((p) => [p.id, p]));
+  const pipelineByTask = new Map();
+  for (const p of data.pipelines) {
+    for (const tid of p.task_ids) pipelineByTask.set(tid, p);
+  }
+  return { runsByTask, eventsByTask, commentsByTask, taskById, artifactsByTask, pipelineById, pipelineByTask };
 }
 
 // ── 필터 ─────────────────────────────────────────────
@@ -244,58 +250,154 @@ function initViewer() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeViewer(); });
 }
 
+// 산출물 → 소속 파이프라인 폴더 키 (마지막 연결 태스크 기준, 없으면 '_etc')
+function artifactFolderKey(a) {
+  const ids = a.task_ids || [];
+  for (let i = ids.length - 1; i >= 0; i--) {
+    const p = state.idx.pipelineByTask.get(ids[i]);
+    if (p) return p.id;
+  }
+  return '_etc';
+}
+function folderName(key) {
+  if (key === '_etc') return '파이프라인 미연결';
+  const p = state.idx.pipelineById.get(key);
+  return p ? p.name : '(알 수 없는 폴더)';
+}
+function groupArtifactsByPipeline(artifacts) {
+  const groups = new Map(); // key → {key, name, pipeline, items, latest}
+  for (const a of artifacts) {
+    const key = artifactFolderKey(a);
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, name: folderName(key), pipeline: state.idx.pipelineById.get(key) || null, items: [], latest: 0 };
+      groups.set(key, g);
+    }
+    g.items.push(a);
+    g.latest = Math.max(g.latest, a.mtime || 0);
+  }
+  return [...groups.values()].sort((x, y) => y.latest - x.latest);
+}
+function folderHref(key) { return `#outputs/${encodeURIComponent(key)}`; }
+
+function artifactCard(a) {
+  const card = el('div', 'artifact-card');
+
+  if (a.type === 'video') {
+    const video = document.createElement('video');
+    video.src = a.rel;
+    video.controls = true;
+    video.preload = 'metadata';
+    card.appendChild(video);
+  } else {
+    const media = el('button', 'artifact-media');
+    media.type = 'button';
+    media.setAttribute('aria-label', `${a.name} 열기`);
+    if (a.type === 'image') {
+      const img = document.createElement('img');
+      img.src = a.rel;
+      img.alt = a.name;
+      img.loading = 'lazy';
+      media.appendChild(img);
+    } else {
+      const face = el('span', 'doc-face');
+      face.appendChild(el('span', 'doc-icon', DOC_ICONS[a.type] || '📄'));
+      face.appendChild(el('span', '', a.type === 'csv' ? 'CSV 데이터' : a.type === 'link' ? '새 탭에서 열기' : 'Markdown 문서'));
+      media.appendChild(face);
+    }
+    media.addEventListener('click', () => openArtifact(a));
+    card.appendChild(media);
+  }
+
+  const meta = el('div', 'artifact-meta');
+  meta.appendChild(el('div', 'artifact-name', a.name));
+  const sub = el('div', 'artifact-sub');
+  sub.appendChild(agentChip(a.team));
+  sub.appendChild(document.createTextNode(`${fmtBytes(a.size)} · ${fmtTs(a.mtime)}`));
+  meta.appendChild(sub);
+  const title = artifactTaskTitle(a);
+  if (title) {
+    const taskLine = el('div', 'artifact-task', title);
+    taskLine.title = title;
+    meta.appendChild(taskLine);
+  }
+  card.appendChild(meta);
+  return card;
+}
+
+function folderRow(g) {
+  const row = document.createElement('a');
+  row.className = 'artifact-folder';
+  row.href = folderHref(g.key);
+  row.appendChild(el('span', 'folder-icon', '📁'));
+  row.appendChild(el('span', 'folder-name', g.name));
+
+  const thumbs = el('span', 'folder-thumbs');
+  for (const it of g.items.filter((x) => x.type === 'image').slice(0, 4)) {
+    const img = document.createElement('img');
+    img.src = it.rel;
+    img.alt = '';
+    img.loading = 'lazy';
+    thumbs.appendChild(img);
+  }
+  if (thumbs.childElementCount) row.appendChild(thumbs);
+
+  if (g.pipeline) row.appendChild(statusChip(PIPE_STATUS[g.pipeline.status] || g.pipeline.status));
+  row.appendChild(el('span', 'folder-count', `${g.items.length}개`));
+  row.appendChild(el('span', 'folder-when', `최근 ${fmtTs(g.latest)}`));
+  return row;
+}
+
 function renderArtifacts(f) {
   const root = document.getElementById('artifact-grid');
   clear(root);
-  if (!f.artifacts.length) {
-    root.appendChild(el('p', 'empty-note', '이 조건에 해당하는 산출물이 없습니다.'));
+  const groups = groupArtifactsByPipeline(f.artifacts);
+
+  // 폴더(파이프라인) 목록 보기
+  if (state.artifactFolder == null) {
+    root.className = 'folder-list';
+    if (!groups.length) {
+      root.appendChild(el('p', 'empty-note', '이 조건에 해당하는 산출물이 없습니다.'));
+      return;
+    }
+    for (const g of groups) root.appendChild(folderRow(g));
     return;
   }
-  for (const a of f.artifacts) {
-    const card = el('div', 'artifact-card');
 
-    if (a.type === 'video') {
-      const video = document.createElement('video');
-      video.src = a.rel;
-      video.controls = true;
-      video.preload = 'metadata';
-      card.appendChild(video);
-    } else {
-      const media = el('button', 'artifact-media');
-      media.type = 'button';
-      media.setAttribute('aria-label', `${a.name} 열기`);
-      if (a.type === 'image') {
-        const img = document.createElement('img');
-        img.src = a.rel;
-        img.alt = a.name;
-        img.loading = 'lazy';
-        media.appendChild(img);
-      } else {
-        const face = el('span', 'doc-face');
-        face.appendChild(el('span', 'doc-icon', DOC_ICONS[a.type] || '📄'));
-        face.appendChild(el('span', '', a.type === 'csv' ? 'CSV 데이터' : a.type === 'link' ? '새 탭에서 열기' : 'Markdown 문서'));
-        media.appendChild(face);
-      }
-      media.addEventListener('click', () => openArtifact(a));
-      card.appendChild(media);
-    }
+  // 폴더 내부 보기 (해당 파이프라인 산출물만)
+  root.className = 'artifact-grid';
+  const g = groups.find((x) => x.key === state.artifactFolder);
 
-    const meta = el('div', 'artifact-meta');
-    meta.appendChild(el('div', 'artifact-name', a.name));
-    const sub = el('div', 'artifact-sub');
-    sub.appendChild(agentChip(a.team));
-    sub.appendChild(document.createTextNode(`${fmtBytes(a.size)} · ${fmtTs(a.mtime)}`));
-    meta.appendChild(sub);
-    const title = artifactTaskTitle(a);
-    if (title) {
-      const taskLine = el('div', 'artifact-task', title);
-      taskLine.title = title;
-      meta.appendChild(taskLine);
-    }
-    card.appendChild(meta);
-    root.appendChild(card);
+  const crumb = el('div', 'artifact-crumb');
+  const back = document.createElement('a');
+  back.href = '#outputs';
+  back.textContent = '📁 전체 산출물';
+  crumb.appendChild(back);
+  crumb.appendChild(el('span', 'crumb-sep', '›'));
+  crumb.appendChild(el('span', 'crumb-name', folderName(state.artifactFolder)));
+  if (g) crumb.appendChild(el('span', 'crumb-count', `${g.items.length}개`));
+  root.appendChild(crumb);
+
+  if (!g) {
+    root.appendChild(el('p', 'empty-note', '이 조건에 해당하는 산출물이 없습니다. 기간·에이전트 필터를 확인하거나 전체 산출물로 돌아가세요.'));
+    return;
   }
+  for (const a of g.items) root.appendChild(artifactCard(a));
 }
+
+// ── 산출물 해시 라우팅 (#outputs / #outputs/<폴더키>) ─
+function parseArtifactHash() {
+  const m = /^#outputs(?:\/(.+))?$/.exec(location.hash);
+  state.artifactFolder = m && m[1] ? decodeURIComponent(m[1]) : null;
+}
+window.addEventListener('hashchange', () => {
+  const isOutputs = /^#outputs/.test(location.hash);
+  if (!isOutputs && state.artifactFolder == null) return; // 산출물과 무관한 해시 변경
+  parseArtifactHash();
+  if (!state.data) return;
+  renderArtifacts(getFiltered());
+  if (isOutputs) document.getElementById('artifacts-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 // ── 칩 빌더 ──────────────────────────────────────────
 function agentChip(name) {
@@ -739,6 +841,15 @@ function renderPipelines(f) {
       node.title = `${t.title} — ${(TASK_STATUS[t.status] || {}).label || t.status}`;
       chain.appendChild(node);
     });
+    const artCount = f.artifacts.filter((a) => artifactFolderKey(a) === p.id).length;
+    if (artCount) {
+      const link = document.createElement('a');
+      link.className = 'pipe-artifact-link';
+      link.href = folderHref(p.id);
+      link.textContent = `📁 산출물 ${artCount}개`;
+      link.title = '이 파이프라인의 산출물만 보기';
+      chain.appendChild(link);
+    }
     card.appendChild(chain);
 
     const detail = el('div', 'pipeline-detail');
@@ -977,6 +1088,9 @@ async function loadData(initial) {
       state.idx = buildIndexes(data);
       if (initial) renderAgentFilter();
       renderAll();
+      if (initial && state.artifactFolder != null) {
+        document.getElementById('artifacts-panel').scrollIntoView();
+      }
     }
     renderFreshness();
     document.getElementById('error-banner').hidden = true;
@@ -1003,6 +1117,7 @@ function renderAll() {
 initTheme();
 initViewer();
 bindRangeFilter();
+parseArtifactHash();
 loadData(true);
 setInterval(() => { renderFreshness(); }, 30 * 1000);
 setInterval(() => {
