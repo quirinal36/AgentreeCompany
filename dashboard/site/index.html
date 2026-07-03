@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agentree Operations — 파이프라인 대시보드</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎭</text></svg>" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div class="page" id="app">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1>🎭 Agentree Operations</h1>
+        <p class="subtitle">LetsCoding 에이전트 팀 파이프라인 실행 현황</p>
+      </div>
+      <div class="topbar-meta">
+        <span id="data-freshness" class="freshness" title="데이터 스냅샷 기준 시각"></span>
+        <button id="theme-toggle" class="icon-btn" type="button" aria-label="테마 전환">◐</button>
+      </div>
+    </header>
+
+    <nav class="filters" aria-label="필터">
+      <div class="filter-group" id="range-filter" role="group" aria-label="기간">
+        <button type="button" data-range="all" class="chip-btn selected">전체</button>
+        <button type="button" data-range="today" class="chip-btn">오늘</button>
+        <button type="button" data-range="7" class="chip-btn">최근 7일</button>
+        <button type="button" data-range="30" class="chip-btn">최근 30일</button>
+      </div>
+      <div class="filter-group" id="agent-filter" role="group" aria-label="담당 에이전트"></div>
+    </nav>
+
+    <main>
+      <section class="kpi-row" id="kpi-row" aria-label="핵심 지표"></section>
+
+      <section class="panel" id="now-panel">
+        <h2>진행 현황 <span class="h2-sub">스냅샷 시점 기준 활성 태스크</span></h2>
+        <div id="now-cards" class="now-cards"></div>
+      </section>
+
+      <section class="charts-row">
+        <div class="panel chart-panel">
+          <h2>일별 실행 결과 <span class="h2-sub">종료된 런 기준</span></h2>
+          <div class="legend" id="daily-legend"></div>
+          <div class="chart-wrap" id="daily-chart"></div>
+        </div>
+        <div class="panel chart-panel">
+          <h2>에이전트별 실행 결과 <span class="h2-sub">종료된 런 기준</span></h2>
+          <div class="legend" id="agent-legend"></div>
+          <div class="chart-wrap" id="agent-chart"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="pipelines-panel">
+        <h2>파이프라인 히스토리 <span class="h2-sub">카드를 누르면 태스크·런·이벤트 상세가 열립니다</span></h2>
+        <div id="pipeline-list" class="pipeline-list"></div>
+      </section>
+
+      <section class="panel" id="table-panel">
+        <h2>전체 태스크 <span class="h2-sub">표 보기</span></h2>
+        <div class="table-scroll">
+          <table id="task-table">
+            <thead>
+              <tr>
+                <th scope="col">태스크</th>
+                <th scope="col">담당</th>
+                <th scope="col">상태</th>
+                <th scope="col">생성</th>
+                <th scope="col">시작</th>
+                <th scope="col">소요</th>
+                <th scope="col">시도</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>데이터 소스: <code>~/.hermes/kanban.db</code> 스냅샷 · <code>dashboard/scripts/deploy.sh</code> 실행 시 갱신</span>
+    </footer>
+  </div>
+
+  <div id="tooltip" class="tooltip" role="status" aria-hidden="true"></div>
+  <div id="error-banner" class="error-banner" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
