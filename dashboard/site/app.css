@@ -332,6 +332,76 @@ main.refreshing .panel, main.refreshing .kpi-row { opacity: 0.55; transition: op
 .viewer-body .doc-view.csv { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre; }
 .viewer-caption { color: rgba(255,255,255,0.85); font-size: 12.5px; margin-top: 10px; max-width: 94vw; text-align: center; }
 
+/* ── 마크다운 렌더 (뷰어) ─────────────── */
+.viewer-body .doc-view.md {
+  white-space: normal; text-align: left; color: var(--ink);
+  font-size: 14px; line-height: 1.72;
+}
+.doc-view.md .doc-loading { color: var(--muted); }
+.doc-view.md > *:first-child { margin-top: 0; }
+.doc-view.md > *:last-child { margin-bottom: 0; }
+.doc-view.md h1, .doc-view.md h2, .doc-view.md h3,
+.doc-view.md h4, .doc-view.md h5, .doc-view.md h6 {
+  color: var(--ink); font-weight: 700; line-height: 1.3; margin: 1.5em 0 0.55em;
+}
+.doc-view.md h1 { font-size: 1.7em; letter-spacing: -0.01em; }
+.doc-view.md h2 { font-size: 1.34em; padding-bottom: 0.28em; border-bottom: 1px solid var(--grid); }
+.doc-view.md h3 { font-size: 1.14em; }
+.doc-view.md h4 { font-size: 1.02em; }
+.doc-view.md h5, .doc-view.md h6 { font-size: 0.92em; color: var(--ink-2); }
+.doc-view.md p { margin: 0.72em 0; }
+.doc-view.md strong { font-weight: 700; color: var(--ink); }
+.doc-view.md em { font-style: italic; }
+.doc-view.md a { color: var(--agent-blue); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.doc-view.md ul, .doc-view.md ol { margin: 0.72em 0; padding-left: 1.5em; }
+.doc-view.md li { margin: 0.32em 0; }
+.doc-view.md li > ul, .doc-view.md li > ol { margin: 0.3em 0; }
+.doc-view.md blockquote {
+  margin: 0.95em 0; padding: 0.5em 1em; color: var(--ink-2);
+  border-left: 3px solid var(--baseline); background: var(--ghost); border-radius: 0 6px 6px 0;
+}
+.doc-view.md blockquote > *:first-child { margin-top: 0; }
+.doc-view.md blockquote > *:last-child { margin-bottom: 0; }
+.doc-view.md hr { border: none; border-top: 1px solid var(--grid); margin: 1.7em 0; }
+.doc-view.md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em;
+  background: var(--ghost); border: 1px solid var(--border); border-radius: 4px; padding: 0.1em 0.36em;
+}
+.doc-view.md pre {
+  margin: 0.95em 0; padding: 12px 14px; overflow-x: auto;
+  background: var(--ghost); border: 1px solid var(--border); border-radius: 8px;
+}
+.doc-view.md pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; white-space: pre; }
+.doc-view.md img { max-width: 100%; height: auto; border-radius: 6px; margin: 0.5em 0; }
+.doc-view.md .md-table-wrap { overflow-x: auto; margin: 1.05em 0; border: 1px solid var(--grid); border-radius: 8px; }
+.doc-view.md table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.doc-view.md thead th {
+  background: var(--ghost); color: var(--ink); font-weight: 600; text-align: left;
+  border-bottom: 1px solid var(--baseline); padding: 8px 12px; white-space: nowrap;
+}
+.doc-view.md tbody td { border-bottom: 1px solid var(--grid); padding: 7px 12px; color: var(--ink); vertical-align: top; }
+.doc-view.md tbody tr:last-child td { border-bottom: none; }
+.doc-view.md tbody tr:nth-child(even) td { background: var(--ghost); }
+.doc-view.md .md-frontmatter {
+  margin: 0 0 1.3em; padding: 10px 14px; background: var(--ghost);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.doc-view.md .md-frontmatter dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 0; font-size: 12px; }
+.doc-view.md .md-frontmatter dt { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.doc-view.md .md-frontmatter dd { color: var(--ink-2); margin: 0; overflow-wrap: anywhere; }
+.doc-view.md .md-fnref {
+  font-size: 0.68em; font-weight: 700; color: var(--agent-blue);
+  vertical-align: super; line-height: 0; padding: 0 0.1em;
+}
+.doc-view.md .md-footnotes { margin-top: 2em; }
+.doc-view.md .md-footnotes hr { margin: 0 0 1em; }
+.doc-view.md .md-fn-title {
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-bottom: 0.6em;
+}
+.doc-view.md .md-footnotes ol { margin: 0; padding-left: 1.6em; font-size: 12px; color: var(--ink-2); }
+.doc-view.md .md-footnotes li { margin: 0.35em 0; overflow-wrap: anywhere; }
+
 /* ── 테이블 ───────────────────────────── */
 .table-scroll { overflow-x: auto; }
 #task-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }

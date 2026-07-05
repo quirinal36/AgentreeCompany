@@ -200,6 +200,255 @@ function artifactTaskTitle(a) {
   return t ? t.title : null;
 }
 
+// ── 마크다운 → DOM 렌더러 ────────────────────────────
+// innerHTML 을 쓰지 않고 createElement 로만 노드를 만든다 (XSS 안전 · 상단 규칙 준수).
+// 지원: 헤딩, 문단, 목록(중첩), GFM 표(정렬), 코드펜스/인라인코드, 인용, 수평선,
+//       굵게/기울임/취소선, 링크·이미지·자동링크, YAML front matter.
+function mdResolveUrl(url, base) {
+  const u = String(url == null ? '' : url).trim();
+  if (!u) return u;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.startsWith('//') || u.startsWith('/') || u.startsWith('#')) return u;
+  return (base || '') + u; // md 파일 기준 상대경로 → 사이트 경로로 보정
+}
+function mdSafeUrl(url) {
+  const u = String(url).trim();
+  if (/^\s*(javascript:|vbscript:|data:text\/html)/i.test(u)) return null;
+  return u;
+}
+const MD_INLINE = [
+  { kind: 'fnref', re: /(\d+)/ }, // 인라인 각주 플레이스홀더 (renderMarkdown 이 심음)
+  { kind: 'code', re: /`([^`]+)`/ },
+  { kind: 'image', re: /!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/ },
+  { kind: 'link', re: /\[([^\]]+)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/ },
+  { kind: 'strong', re: /\*\*([^*]+?)\*\*/ },
+  { kind: 'strong', re: /__([^_]+?)__/ },
+  { kind: 'del', re: /~~([^~]+?)~~/ },
+  { kind: 'em', re: /(?<![\w*])\*([^*\n]+?)\*(?![\w*])/ },
+  { kind: 'em', re: /(?<![\w_])_([^_\n]+?)_(?![\w_])/ },
+  { kind: 'autolink', re: /(https?:\/\/[^\s<)\]]+)/ },
+];
+function mdInline(text, base) {
+  const frag = document.createDocumentFragment();
+  let rest = String(text);
+  while (rest) {
+    let best = null;
+    for (const p of MD_INLINE) {
+      const m = p.re.exec(rest);
+      if (m && m[0] && (best === null || m.index < best.m.index)) best = { p, m };
+    }
+    if (!best) { frag.appendChild(document.createTextNode(rest)); break; }
+    const { p, m } = best;
+    if (m.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, m.index)));
+    frag.appendChild(mdInlineNode(p.kind, m, base));
+    rest = rest.slice(m.index + m[0].length);
+  }
+  return frag;
+}
+function mdInlineNode(kind, m, base) {
+  if (kind === 'fnref') return el('sup', 'md-fnref', m[1]);
+  if (kind === 'code') return el('code', null, m[1]);
+  if (kind === 'strong' || kind === 'em' || kind === 'del') {
+    const tag = kind === 'strong' ? 'strong' : kind === 'em' ? 'em' : 'del';
+    const n = document.createElement(tag);
+    n.appendChild(mdInline(m[1], base));
+    return n;
+  }
+  if (kind === 'image') {
+    const img = document.createElement('img');
+    img.src = mdResolveUrl(m[2], base); img.alt = m[1] || ''; img.loading = 'lazy';
+    return img;
+  }
+  // link / autolink
+  const rawHref = kind === 'link' ? m[2] : m[1];
+  const label = kind === 'link' ? m[1] : m[1];
+  const href = mdSafeUrl(mdResolveUrl(rawHref, base));
+  if (!href) return document.createTextNode(label);
+  const a = document.createElement('a');
+  a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  if (kind === 'link') a.appendChild(mdInline(label, base)); else a.textContent = label;
+  return a;
+}
+function mdSplitRow(row) {
+  let s = row.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells = []; let cur = '';
+  for (let k = 0; k < s.length; k++) {
+    if (s[k] === '\\' && s[k + 1] === '|') { cur += '|'; k++; continue; }
+    if (s[k] === '|') { cells.push(cur); cur = ''; continue; }
+    cur += s[k];
+  }
+  cells.push(cur);
+  return cells.map((c) => c.trim());
+}
+function mdIsTableSep(line) {
+  return !!line && line.includes('-') && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(line);
+}
+function mdIsBlockStart(line, next) {
+  if (line == null) return false;
+  return /^\s*#{1,6}\s+/.test(line)
+    || /^\s*(```+|~~~+)/.test(line)
+    || /^\s*([-*_])(\s*\1){2,}\s*$/.test(line)
+    || /^\s*>/.test(line)
+    || /^\s*([-*+]|\d+\.)\s+/.test(line)
+    || (line.includes('|') && mdIsTableSep(next));
+}
+function mdTable(lines, start, base) {
+  const header = mdSplitRow(lines[start]);
+  const aligns = mdSplitRow(lines[start + 1]).map((spec) => {
+    const l = spec.startsWith(':'), r = spec.endsWith(':');
+    return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+  });
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  header.forEach((c, idx) => {
+    const th = document.createElement('th');
+    if (aligns[idx]) th.style.textAlign = aligns[idx];
+    th.appendChild(mdInline(c, base));
+    htr.appendChild(th);
+  });
+  thead.appendChild(htr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  let i = start + 2;
+  for (; i < lines.length && lines[i].trim() && lines[i].includes('|'); i++) {
+    const cells = mdSplitRow(lines[i]);
+    const tr = document.createElement('tr');
+    for (let idx = 0; idx < header.length; idx++) {
+      const td = document.createElement('td');
+      if (aligns[idx]) td.style.textAlign = aligns[idx];
+      td.appendChild(mdInline(cells[idx] || '', base));
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  const wrap = el('div', 'md-table-wrap');
+  wrap.appendChild(table);
+  return { node: wrap, next: i };
+}
+function mdList(lines, start, base) {
+  const first = lines[start].match(/^(\s*)([-*+]|\d+\.)\s+/);
+  const baseIndent = first[1].length;
+  const ordered = /\d+\./.test(first[2]);
+  const list = document.createElement(ordered ? 'ol' : 'ul');
+  let i = start;
+  while (i < lines.length) {
+    if (!lines[i].trim()) {
+      if (i + 1 < lines.length && /^(\s*)([-*+]|\d+\.)\s+/.test(lines[i + 1])) { i++; continue; }
+      break;
+    }
+    const m = lines[i].match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+    if (!m) break;
+    const indent = m[1].length;
+    if (indent < baseIndent) break;
+    if (indent > baseIndent) {
+      const sub = mdList(lines, i, base);
+      (list.lastElementChild || list).appendChild(sub.node);
+      i = sub.next; continue;
+    }
+    const li = document.createElement('li');
+    li.appendChild(mdInline(m[3], base));
+    list.appendChild(li);
+    i++;
+  }
+  return { node: list, next: i };
+}
+function mdFrontMatter(fmLines) {
+  const dl = document.createElement('dl');
+  for (const raw of fmLines) {
+    const m = raw.match(/^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
+    if (!m || !m[2].trim()) continue;
+    dl.appendChild(el('dt', null, m[1]));
+    dl.appendChild(el('dd', null, m[2].trim().replace(/^["']|["']$/g, '')));
+  }
+  if (!dl.childNodes.length) return document.createDocumentFragment();
+  const wrap = el('div', 'md-frontmatter');
+  wrap.appendChild(dl);
+  return wrap;
+}
+// 최상위 진입점: pandoc식 인라인 각주 ^[...] 를 뽑아 위첨자 번호로 바꾸고
+// 본문 끝에 "출처" 목록으로 모은다. 그 뒤 블록 파싱(mdBlocks)에 넘긴다.
+function renderMarkdown(text, base) {
+  const notes = [];
+  const prepared = String(text).replace(/\^\[([^\]]+)\]/g, (_, inner) => {
+    notes.push(inner.trim());
+    return '' + notes.length + '';
+  });
+  const frag = mdBlocks(prepared, base);
+  if (notes.length) {
+    const sec = el('section', 'md-footnotes');
+    sec.appendChild(document.createElement('hr'));
+    sec.appendChild(el('div', 'md-fn-title', '출처'));
+    const ol = document.createElement('ol');
+    notes.forEach((n) => {
+      const li = document.createElement('li');
+      li.appendChild(mdInline(n, base));
+      ol.appendChild(li);
+    });
+    sec.appendChild(ol);
+    frag.appendChild(sec);
+  }
+  return frag;
+}
+function mdBlocks(text, base) {
+  const root = document.createDocumentFragment();
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  let i = 0;
+  if (lines[0] === '---') { // YAML front matter
+    let j = 1;
+    while (j < lines.length && lines[j] !== '---') j++;
+    if (j < lines.length) { root.appendChild(mdFrontMatter(lines.slice(1, j))); i = j + 1; }
+  }
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    const fence = line.match(/^\s*(```+|~~~+)/);
+    if (fence) {
+      const marker = fence[1][0];
+      const closeRe = new RegExp('^\\s*\\' + marker + '{3,}\\s*$');
+      const buf = []; i++;
+      while (i < lines.length && !closeRe.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++;
+      const pre = document.createElement('pre');
+      const code = el('code', null, buf.join('\n'));
+      pre.appendChild(code); root.appendChild(pre);
+      continue;
+    }
+    const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
+    if (h) {
+      const head = document.createElement('h' + h[1].length);
+      head.appendChild(mdInline(h[2].replace(/\s+#+\s*$/, ''), base));
+      root.appendChild(head); i++; continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      root.appendChild(document.createElement('hr')); i++; continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+      const bq = document.createElement('blockquote');
+      bq.appendChild(mdBlocks(buf.join('\n'), base));
+      root.appendChild(bq); continue;
+    }
+    if (line.includes('|') && mdIsTableSep(lines[i + 1])) {
+      const t = mdTable(lines, i, base);
+      root.appendChild(t.node); i = t.next; continue;
+    }
+    if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
+      const l = mdList(lines, i, base);
+      root.appendChild(l.node); i = l.next; continue;
+    }
+    const buf = [];
+    while (i < lines.length && lines[i].trim() && !mdIsBlockStart(lines[i], lines[i + 1])) { buf.push(lines[i]); i++; }
+    const p = document.createElement('p');
+    buf.forEach((ln, idx) => {
+      if (idx > 0) p.appendChild(document.createElement('br'));
+      p.appendChild(mdInline(ln, base));
+    });
+    root.appendChild(p);
+  }
+  return root;
+}
+
 function openArtifact(a) {
   if (a.type === 'link') {
     window.open(a.rel, '_blank', 'noopener');
@@ -220,6 +469,15 @@ function openArtifact(a) {
     video.controls = true;
     video.autoplay = true;
     body.appendChild(video);
+  } else if (a.type === 'markdown') {
+    const doc = el('div', 'doc-view md');
+    doc.appendChild(el('div', 'doc-loading', '불러오는 중…'));
+    body.appendChild(doc);
+    const base = a.rel.replace(/[^/]*$/, ''); // md 파일이 있는 디렉터리 (상대 링크·이미지 기준)
+    fetch(a.rel)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
+      .then((text) => { clear(doc); doc.appendChild(renderMarkdown(text, base)); })
+      .catch((e) => { clear(doc); doc.textContent = `파일을 불러오지 못했습니다 (${e.message})`; });
   } else {
     const doc = el('div', 'doc-view' + (a.type === 'csv' ? ' csv' : ''));
     doc.textContent = '불러오는 중…';
